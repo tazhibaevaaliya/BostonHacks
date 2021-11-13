@@ -1,4 +1,4 @@
-import React, {Component} from 'react';
+import React, {Component, useState} from 'react';
 import sortBy from 'sort-by';
 import {CSSTransitionGroup} from 'react-transition-group';
 import SwipeableViews from 'react-swipeable-views';
@@ -17,6 +17,13 @@ import ColumnList from './ColumnList';
 import ConfirmDialog from './ConfirmDialog';
 import If from './If';
 import './App.css';
+//import async from '../server/speechDetection';
+//import RecordRTC from "https://www.WebRTC-Experiment.com/RecordRTC.js"
+import useScript from 'react-script-hook';
+
+const MyComponent = props => {
+  useScript("https://www.WebRTC-Experiment.com/RecordRTC.js");
+}
 
 /**
  * @description Main App component.
@@ -24,6 +31,8 @@ import './App.css';
  * @param {Object} props - The props that were defined by the caller of this component.
  */
 class App extends Component {
+	//message = "Hello"
+
 	constructor(props) {
 		super(props);
 
@@ -47,6 +56,11 @@ class App extends Component {
 			removeMode: false,
 		};
 	}
+
+	MyComponent = props => {
+		useScript("https://www.WebRTC-Experiment.com/RecordRTC.js");
+	  }
+	  
 
 	/**
 	 * Lifecycle event handler called just after the App loads into the DOM.
@@ -94,6 +108,8 @@ class App extends Component {
 			this.updateTaskCounter(this.state.taskIdCounter);
 		}.bind(this));
 	};
+
+
 
 	/**
 	 * @description Update task toggling between To Do/Done status.
@@ -230,6 +246,111 @@ class App extends Component {
 		}
 	};
 
+	message = ""
+// runs real-time transcription and handles global variables
+    run = async () => {
+		console.log("here")
+	// messageEl.style.display = 'none';
+	let isRecording =  false;
+	let socket;
+	let recorder;
+
+  	if (isRecording) { 
+		if (socket) {
+		socket.send(JSON.stringify({terminate_session: true}));
+		socket.close();
+		socket = null;
+		}
+
+		if (recorder) {
+		recorder.pauseRecording();
+		recorder = null;
+		}
+	} else {
+		const response = await fetch('http://localhost:5000'); // get temp session token from server.js (backend)
+		const data = await response.json();
+
+		if(data.error){
+		alert(data.error)
+		}
+    
+    	const { token } = data;
+
+		// establish wss with AssemblyAI (AAI) at 16000 sample rate
+		socket = await new WebSocket(`wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${token}`);
+
+    // handle incoming messages to display transcription to the DOM
+		const texts = {};
+		socket.onmessage = (message) => {
+		let msg = '';
+		const res = JSON.parse(message.data);
+		texts[res.audio_start] = res.text;
+		const keys = Object.keys(texts);
+		keys.sort((a, b) => a - b);
+		console.log(keys)
+		for (const key of keys) {
+			if (texts[key]) {
+			msg += ` ${texts[key]}`;
+			}
+		}
+		// this.message = "msg"
+		this.message = msg
+		console.log(this.message)
+		// messageEl.innerText = msg;
+		// this.message = msg
+		};
+
+		socket.onerror = (event) => {
+		console.error(event);
+		socket.close();
+		}
+    
+		socket.onclose = event => {
+		console.log(event);
+		socket = null;
+		}
+
+		socket.onopen = () => {
+		// once socket is open, begin recording
+		// messageEl.style.display = '';
+		navigator.mediaDevices.getUserMedia({ audio: true })
+			.then((stream) => {
+			recorder = new MyComponent(stream, {
+				type: 'audio',
+				messageType:'FinalTranscript',
+				mimeType: 'audio/webm;codecs=pcm', // endpoint requires 16bit PCM audio
+				recorderType: 'StereoAudioRecorder', // ???
+				timeSlice: 250, // set 250 ms intervals of data that sends to AAI
+				desiredSampRate: 16000,
+				numberOfAudioChannels: 1, // real-time requires only one channel
+				bufferSize: 4096,
+				audioBitsPerSecond: 128000,
+				ondataavailable: (blob) => {
+				const reader = new FileReader();
+				reader.onload = () => {
+					const base64data = reader.result;
+
+					// audio data must be sent as a base64 encoded string
+					if (socket) {
+					socket.send(JSON.stringify({ audio_data: base64data.split('base64,')[1] }));
+					}
+				};
+				reader.readAsDataURL(blob);
+				},
+			});
+
+			recorder.startRecording();
+			})
+			.catch((err) => console.error(err));
+		};
+	}
+
+  // isRecording = !isRecording;
+  // buttonEl.innerText = isRecording ? 'Stop' : 'Record';
+  // titleEl.innerText = isRecording ? 'Click stop to end recording!' : 'Click start to begin recording!'
+	};
+
+
 	render() {
 		const { items = [] }  = this.state;
 		const columns = [
@@ -240,6 +361,7 @@ class App extends Component {
 		return (
 			<MuiThemeProvider>
 				<div className="App">
+					<p>{this.message}</p>
 					{/* Clear Tasks Confirmation Dialog */}
 					<ConfirmDialog
 						title="Clear All Tasks"
@@ -251,7 +373,7 @@ class App extends Component {
 					<AppBar
 						title={<span style={{color: 'white'}}>To-Do List</span>}
 						showMenuIconButton={false}
-						style={{backgroundColor: 'rgb(0, 151, 167)', position: 'fixed', zIndex: 9999,}}
+						style={{backgroundColor: '#D8B6A4', position: 'fixed', zIndex: 9999,}}
 					/>
 					<div className="App-container">
 						<div style={{position: 'fixed', width: '100%', paddingTop: 64, zIndex: 8888, backgroundColor: 'white'}}>
@@ -266,6 +388,10 @@ class App extends Component {
 								onChange={this.handleTextFieldChange}
 								onKeyDown={this.keyPress}
 							/>
+							<RaisedButton
+							style={{margin: 10, width: '30%', maxWidth: 56}}
+							label="Record"
+							onClick={this.run}/>
 							<RaisedButton
 								style={{margin: 10, width: '30%', maxWidth: 56}}
 								label="Create"
